@@ -130,7 +130,8 @@ constructor(
                 addOption("--convert-thumbnails", "jpg")
                 addOption("--no-mtime")
                 addOption("--ignore-errors")
-                addOption("-o", "${scratch.absolutePath}/%(id)s.%(ext)s")
+                addOption("-o", "${scratch.absolutePath}/%(title).100s.%(ext)s")
+                addOption("--extractor-args", "youtube:player_client=android_vr,web_safari")
                 // A link to a single video that merely carries a playlist id should not pull in
                 // the whole playlist. Pure playlist links still download everything.
                 if (url.contains("watch?v=") || url.contains("youtu.be/")) {
@@ -258,6 +259,12 @@ constructor(
         synchronized(initLock) {
             if (initialized) return
             YoutubeDL.getInstance().init(context)
+            try {
+                YoutubeDL.getInstance()
+                    .updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+            } catch (e: Exception) {
+                L.w(e, "yt-dlp update failed")
+            }
             FFmpeg.getInstance().init(context)
             initialized = true
         }
