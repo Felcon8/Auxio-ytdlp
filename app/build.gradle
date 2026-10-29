@@ -26,6 +26,10 @@ android {
         targetSdk target_sdk
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters.addAll(["arm64-v8a", "armeabi-v7a"])
+        }
     }
 
     compileOptions {
@@ -61,6 +65,9 @@ android {
     packagingOptions {
         jniLibs {
             excludes += ['**/kotlin/**', '**/okhttp3/**']
+            // youtubedl-android ships python/ffmpeg as executable .so files that must be
+            // extracted to disk at install time.
+            useLegacyPackaging = true
         }
         resources {
             excludes += ['DebugProbesKt.bin', 'kotlin-tooling-metadata.json', '**/kotlin/**', '**/okhttp3/**', 'META-INF/*.version']
@@ -144,6 +151,10 @@ dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:$desugaring_version"
 
     // --- SECOND PARTY ---
+
+    // yt-dlp (fork addition): python + yt-dlp + ffmpeg wrapped for Android
+    implementation "io.github.junkfood02.youtubedl-android:library:0.18.1"
+    implementation "io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1"
 
     // Musikr
     implementation project(":musikr")

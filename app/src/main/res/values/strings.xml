@@ -83,6 +83,27 @@
 
     <string name="lbl_playlist">Playlist</string>
     <string name="lbl_playlists">Playlists</string>
+    <string name="lbl_ytdlp">yt-dlp</string>
+    <string name="lbl_ytdlp_title">Download with yt-dlp</string>
+    <string name="lng_ytdlp_hint">Paste a link to a video, song or playlist. The audio is downloaded as MP3 (videos are converted) and can be added to a playlist of your choice.</string>
+    <string name="lbl_ytdlp_link">Link</string>
+    <string name="lbl_ytdlp_paste">Paste</string>
+    <string name="lbl_ytdlp_download">Download</string>
+    <string name="lbl_ytdlp_pick_playlist">Add to playlist</string>
+    <string name="lbl_ytdlp_skip_playlist">Skip (no playlist)</string>
+    <string name="ytdlp_done_no_playlist">Downloaded %1$d song(s) to the “%2$s” folder.</string>
+    <string name="lbl_ytdlp_new_playlist">New playlist…</string>
+    <string name="lbl_ytdlp_new_playlist_title">New playlist</string>
+    <string name="err_ytdlp_bad_link">Enter a valid link</string>
+    <string name="err_ytdlp_no_permission">Storage permission is needed to save music on this Android version</string>
+    <string name="ytdlp_starting">Starting yt-dlp…</string>
+    <string name="ytdlp_downloading">Downloading…</string>
+    <string name="ytdlp_saving">Saving to the “%1$s” folder…</string>
+    <string name="ytdlp_indexing">Waiting for Auxio to pick up the new songs…</string>
+    <string name="ytdlp_nothing">yt-dlp did not produce any audio for this link.</string>
+    <string name="ytdlp_not_indexed">The files were saved to the “%1$s” folder, but Auxio did not find them. Make sure your music folder is set in Settings → Music folders, then refresh the library.</string>
+    <string name="ytdlp_done">Added %1$d song(s) to “%2$s”.</string>
+    <string name="ytdlp_failed">Download failed: %1$s</string>
     <string name="lbl_new_playlist">New playlist</string>
     <string name="lbl_empty_playlist">Empty playlist</string>
     <string name="lbl_imported_playlist">Imported playlist</string>

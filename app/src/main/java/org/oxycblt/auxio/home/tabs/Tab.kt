@@ -47,7 +47,7 @@ sealed class Tab(open val type: MusicType) {
         // cannot be serialized on their own. Instead, they are saved as a sequence of tabs as shown
         // below:
         //
-        // 0bTAB1_TAB2_TAB3_TAB4_TAB5
+        // 0bTAB1_TAB2_TAB3_TAB4
         //
         // Where TABN is a chunk representing a tab at position N.
         // Each chunk in a sequence is represented as:
@@ -58,22 +58,21 @@ sealed class Tab(open val type: MusicType) {
         // MusicMode for this tab.
 
         /** The maximum index that a well-formed tab sequence should be. */
-        const val MAX_SEQUENCE_IDX = 4
+        const val MAX_SEQUENCE_IDX = 3
 
         /**
-         * The default tab sequence, in integer form. This represents a set of four visible tabs
-         * ordered as "Song", "Album", "Artist", "Genre", and "Playlists
+         * The default tab sequence, in integer form. This fork has four visible tabs ordered as
+         * "Songs", "Albums", "Playlists" and "yt-dlp" (Artists and Genres tabs were removed).
          */
-        const val SEQUENCE_DEFAULT = 0b1000_1001_1010_1011_1100
+        const val SEQUENCE_DEFAULT = 0b1000_1001_1010_1011
 
         /** Maps between the integer code in the tab sequence and it's [MusicType]. */
         private val MODE_TABLE =
             arrayOf(
                 MusicType.SONGS,
                 MusicType.ALBUMS,
-                MusicType.ARTISTS,
-                MusicType.GENRES,
                 MusicType.PLAYLISTS,
+                MusicType.YTDLP,
             )
 
         /**
@@ -140,7 +139,7 @@ sealed class Tab(open val type: MusicType) {
             }
 
             // For safety, return null if we have an empty or larger-than-expected tab array.
-            if (distinct.isEmpty() || distinct.size < MAX_SEQUENCE_IDX) {
+            if (distinct.size != MODE_TABLE.size) {
                 L.e("Sequence size was ${distinct.size}, which is invalid")
                 return null
             }

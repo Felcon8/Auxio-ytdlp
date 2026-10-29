@@ -24,7 +24,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import org.oxycblt.auxio.R
 import org.oxycblt.auxio.home.tabs.Tab
-import org.oxycblt.auxio.music.MusicType
 import org.oxycblt.auxio.settings.Settings
 import org.oxycblt.auxio.util.unlikelyToBeNull
 import timber.log.Timber as L
@@ -70,21 +69,10 @@ class HomeSettingsImpl @Inject constructor(@ApplicationContext context: Context)
         get() = sharedPreferences.getBoolean(getString(R.string.set_key_hide_collaborators), false)
 
     override fun migrate() {
+        // This fork changed the tab layout (no Artists/Genres, new yt-dlp tab), so the old tab
+        // preferences are simply discarded in favor of the new default.
         if (sharedPreferences.contains(OLD_KEY_LIB_TABS)) {
-            L.d("Migrating tab setting")
-            val oldTabs =
-                Tab.fromIntCode(sharedPreferences.getInt(OLD_KEY_LIB_TABS, Tab.SEQUENCE_DEFAULT))
-                    ?: unlikelyToBeNull(Tab.fromIntCode(Tab.SEQUENCE_DEFAULT))
-
-            // The playlist tab is now parsed, but it needs to be made visible.
-            val playlistIndex = oldTabs.indexOfFirst { it.type == MusicType.PLAYLISTS }
-            check(playlistIndex > -1) // This should exist, otherwise we are in big trouble
-            oldTabs[playlistIndex] = Tab.Visible(MusicType.PLAYLISTS)
-
-            sharedPreferences.edit {
-                putInt(getString(R.string.set_key_home_tabs), Tab.toIntCode(oldTabs))
-                remove(OLD_KEY_LIB_TABS)
-            }
+            sharedPreferences.edit { remove(OLD_KEY_LIB_TABS) }
         }
     }
 

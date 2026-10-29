@@ -450,7 +450,7 @@ class MainFragment :
         // If there are no songs, it's likely that the library has not been loaded, so
         // displaying the shuffle FAB makes no sense. We also don't want the fast scroll
         // popup to overlap with the FAB, so we hide the FAB when fast scrolling too.
-        if (shouldHideAllFabs(binding, songs, isFastScrolling)) {
+        if (tabType == MusicType.YTDLP || shouldHideAllFabs(binding, songs, isFastScrolling)) {
             L.d("Hiding fab: [empty: ${songs.isEmpty()} scrolling: $isFastScrolling]")
             forceHideAllFabs()
         } else {

@@ -191,7 +191,8 @@ private constructor(
     private fun getCategoryMediaItems(node: TabNode, maxTabs: Int) =
         when (node) {
             is TabNode.Root -> {
-                val tabs = homeGenerator.tabs()
+                // The yt-dlp tab is a phone-only UI, don't expose it to Android Auto & co.
+                val tabs = homeGenerator.tabs().filter { it != MusicType.YTDLP }
                 if (maxTabs < tabs.size) {
                     tabs.take(maxTabs - 1).map { TabNode.Home(it).toMediaItem(context) } +
                         TabNode.More.toMediaItem(context)
@@ -200,7 +201,7 @@ private constructor(
                 }
             }
             is TabNode.More -> {
-                homeGenerator.tabs().drop(maxTabs - 1).map { TabNode.Home(it).toMediaItem(context) }
+                homeGenerator.tabs().filter { it != MusicType.YTDLP }.drop(maxTabs - 1).map { TabNode.Home(it).toMediaItem(context) }
             }
             is TabNode.Home ->
                 // homeGenerator returns emptyLists
@@ -210,6 +211,7 @@ private constructor(
                     MusicType.ARTISTS -> homeGenerator.artists().map { it.toMediaItem(context) }
                     MusicType.GENRES -> homeGenerator.genres().map { it.toMediaItem(context) }
                     MusicType.PLAYLISTS -> homeGenerator.playlists().map { it.toMediaItem(context) }
+                    MusicType.YTDLP -> emptyList()
                 }
         }
 

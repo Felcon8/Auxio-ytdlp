@@ -59,6 +59,7 @@ import org.oxycblt.auxio.music.PlaylistDecision
 import org.oxycblt.auxio.music.PlaylistMessage
 import org.oxycblt.auxio.playback.PlaybackDecision
 import org.oxycblt.auxio.playback.PlaybackViewModel
+import org.oxycblt.auxio.ytdlp.YtdlpFragment
 import org.oxycblt.auxio.ui.FadingToolbarOffsetListener
 import org.oxycblt.auxio.util.collect
 import org.oxycblt.auxio.util.collectImmediately
@@ -214,8 +215,11 @@ class HomeFragment : SelectionFragment<FragmentHomeBinding>() {
                         MusicType.ARTISTS -> HomeFragmentDirections.sortArtists()
                         MusicType.GENRES -> HomeFragmentDirections.sortGenres()
                         MusicType.PLAYLISTS -> HomeFragmentDirections.sortPlaylists()
+                        MusicType.YTDLP -> null
                     }
-                findNavController().navigateSafe(directions)
+                if (directions != null) {
+                    findNavController().navigateSafe(directions)
+                }
                 true
             }
             else -> {
@@ -266,7 +270,11 @@ class HomeFragment : SelectionFragment<FragmentHomeBinding>() {
                 MusicType.ARTISTS -> R.id.home_artist_recycler
                 MusicType.GENRES -> R.id.home_genre_recycler
                 MusicType.PLAYLISTS -> R.id.home_playlist_recycler
+                MusicType.YTDLP -> R.id.home_ytdlp_scroll
             }
+        // The sort action makes no sense on the yt-dlp tab.
+        binding.homeNormalToolbar.menu.findItem(R.id.action_sort)?.isVisible =
+            tabType != MusicType.YTDLP
     }
 
     private fun handleRecreate(recreate: Unit?) {
@@ -488,6 +496,7 @@ class HomeFragment : SelectionFragment<FragmentHomeBinding>() {
                 MusicType.ARTISTS -> ArtistListFragment()
                 MusicType.GENRES -> GenreListFragment()
                 MusicType.PLAYLISTS -> PlaylistListFragment()
+                MusicType.YTDLP -> YtdlpFragment()
             }
     }
 }

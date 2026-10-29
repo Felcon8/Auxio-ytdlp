@@ -188,6 +188,9 @@ constructor(
                 playlistInstructions.put(instructions)
                 playlistList.value = homeGenerator.playlists()
             }
+            MusicType.YTDLP -> {
+                // Nothing to invalidate, the yt-dlp tab manages its own state.
+            }
         }
     }
 

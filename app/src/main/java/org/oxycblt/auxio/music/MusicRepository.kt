@@ -45,6 +45,7 @@ import org.oxycblt.musikr.cache.MutableCache
 import org.oxycblt.musikr.fs.mediastore.MediaStore
 import org.oxycblt.musikr.fs.saf.SAF
 import org.oxycblt.musikr.playlist.db.StoredPlaylists
+import org.oxycblt.musikr.tag.Name
 import org.oxycblt.musikr.tag.interpret.Naming
 import org.oxycblt.musikr.tag.interpret.Separators
 import timber.log.Timber as L
@@ -245,6 +246,7 @@ constructor(
     private val storedPlaylists: StoredPlaylists,
     private val settingCovers: SettingCovers,
     private val musicSettings: MusicSettings,
+    private val playlistFolders: PlaylistFolders,
 ) : MusicRepository {
     private val updateListeners = mutableListOf<MusicRepository.UpdateListener>()
     private val indexingListeners = mutableListOf<MusicRepository.IndexingListener>()
@@ -323,6 +325,8 @@ constructor(
         val newLibrary = library.createPlaylist(name, songs)
         synchronized(this) { this.library = newLibrary }
         withContext(Dispatchers.Main) { dispatchLibraryChange(device = false, user = true) }
+        // Fork feature: every playlist has a folder in the main music folder.
+        withContext(Dispatchers.IO) { playlistFolders.copySongs(name, songs) }
     }
 
     override suspend fun renamePlaylist(playlist: Playlist, name: String) {
@@ -347,6 +351,10 @@ constructor(
         val newLibrary = library.addToPlaylist(playlist, songs)
         synchronized(this) { this.library = newLibrary }
         withContext(Dispatchers.Main) { dispatchLibraryChange(device = false, user = true) }
+        val playlistName = (playlist.name as? Name.Known)?.raw
+        if (playlistName != null) {
+            withContext(Dispatchers.IO) { playlistFolders.copySongs(playlistName, songs) }
+        }
     }
 
     override suspend fun rewritePlaylist(playlist: Playlist, songs: List<Song>) {
