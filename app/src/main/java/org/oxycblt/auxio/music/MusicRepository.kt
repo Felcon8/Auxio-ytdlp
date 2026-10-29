@@ -322,6 +322,7 @@ constructor(
     override suspend fun createPlaylist(name: String, songs: List<Song>) {
         val library = synchronized(this) { library ?: return }
         L.d("Creating playlist $name with ${songs.size} songs")
+        setFolderIgnored(name, false)
         val newLibrary = library.createPlaylist(name, songs)
         synchronized(this) { this.library = newLibrary }
         withContext(Dispatchers.Main) { dispatchLibraryChange(device = false, user = true) }
@@ -340,6 +341,7 @@ constructor(
     override suspend fun deletePlaylist(playlist: Playlist) {
         val library = synchronized(this) { library ?: return }
         L.d("Deleting $playlist")
+        (playlist.name as? Name.Known)?.raw?.let { setFolderIgnored(it, true) }
         val newLibrary = library.deletePlaylist(playlist)
         synchronized(this) { this.library = newLibrary }
         withContext(Dispatchers.Main) { dispatchLibraryChange(device = false, user = true) }
@@ -428,12 +430,77 @@ constructor(
         // cleanup finishes.
         L.d("Emitting new library")
         emitLibrary(result.library)
+        // Fork feature: turn folders inside the main music folder into playlists.
+        try {
+            syncFolderPlaylists()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            L.e(e, "Could not sync folder playlists")
+        }
         // Clean up old data that is now impossible for the app to be using.
         L.d("Cleanup")
         result.cleanup()
         // Finish up loading.
         L.d("Indexing complete")
         emitIndexingCompletion(null)
+    }
+
+    private val folderPrefs by lazy {
+        context.getSharedPreferences("folder_playlists", Context.MODE_PRIVATE)
+    }
+
+    private fun ignoredFolders(): Set<String> =
+        folderPrefs.getStringSet("ignored", emptySet())?.toSet() ?: emptySet()
+
+    /** Remember (or forget) that the folder of a deleted playlist must not recreate it. */
+    private fun setFolderIgnored(playlistName: String, ignored: Boolean) {
+        val key = PlaylistFolders.folderName(playlistName).lowercase()
+        val set = ignoredFolders().toMutableSet()
+        if (ignored) set.add(key) else set.remove(key)
+        folderPrefs.edit().putStringSet("ignored", set).apply()
+    }
+
+    /**
+     * Fork feature: every sub-folder of the main music folder that contains songs becomes a
+     * playlist (named like the folder), unless a playlist for that folder already exists or the
+     * user deleted that playlist earlier. Existing playlists are never changed, so songs removed
+     * from a playlist by hand do not come back.
+     */
+    private suspend fun syncFolderPlaylists() {
+        val library = synchronized(this) { library ?: return }
+        val root: List<String> =
+            when (musicSettings.locationMode) {
+                LocationMode.SAF ->
+                    musicSettings.safQuery.source.firstOrNull()?.path?.components?.components
+                        ?: return
+                LocationMode.MEDIA_STORE -> listOf("Music")
+            }
+        val existing =
+            library.playlists.map { PlaylistFolders.folderName(it.name.raw).lowercase() }.toSet()
+        val ignored = ignoredFolders()
+
+        val byFolder = linkedMapOf<String, MutableList<Song>>()
+        for (song in library.songs) {
+            val parts = song.path.components.components
+            // Only songs that sit directly inside a sub-folder of the main music folder.
+            if (parts.size != root.size + 2) continue
+            if (parts.subList(0, root.size) != root) continue
+            byFolder.getOrPut(parts[root.size]) { mutableListOf() }.add(song)
+        }
+
+        var newLibrary: MutableLibrary = library
+        var created = 0
+        for ((folder, songs) in byFolder) {
+            val key = PlaylistFolders.folderName(folder).lowercase()
+            if (key in existing || key in ignored) continue
+            L.d("Creating playlist $folder from its folder (${songs.size} songs)")
+            newLibrary = newLibrary.createPlaylist(folder, songs.sortedBy { it.path.name ?: "" })
+            created++
+        }
+        if (created == 0) return
+        synchronized(this) { this.library = newLibrary }
+        withContext(Dispatchers.Main) { dispatchLibraryChange(device = false, user = true) }
     }
 
     private suspend fun emitIndexingProgress(progress: IndexingProgress) {
