@@ -214,8 +214,20 @@ constructor(
                 playlistName = current.name.resolve(context)
             }
             is YtdlpTarget.New -> {
-                musicRepository.createPlaylist(target.name, songs)
-                playlistName = target.name
+                // The folder of a new playlist may already have been turned into a playlist by
+                // the indexer, in that case just add what is missing.
+                val auto =
+                    musicRepository.library?.playlists?.firstOrNull {
+                        it.name.resolve(context).equals(target.name, ignoreCase = true)
+                    }
+                if (auto != null) {
+                    val missing = songs.filter { s -> auto.songs.none { it.uid == s.uid } }
+                    if (missing.isNotEmpty()) musicRepository.addToPlaylist(missing, auto)
+                    playlistName = auto.name.resolve(context)
+                } else {
+                    musicRepository.createPlaylist(target.name, songs)
+                    playlistName = target.name
+                }
             }
         }
         _state.value =
