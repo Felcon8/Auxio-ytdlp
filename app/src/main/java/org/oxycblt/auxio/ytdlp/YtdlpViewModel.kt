@@ -22,6 +22,7 @@ import android.content.Context
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.preference.PreferenceManager
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -29,11 +30,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import org.oxycblt.auxio.BuildConfig
 import org.oxycblt.auxio.R
 import org.oxycblt.auxio.music.MusicRepository
 import org.oxycblt.auxio.music.PlaylistFolders
@@ -88,24 +92,93 @@ constructor(
     fun findPlaylistNamed(name: String): Playlist? =
         playlists().firstOrNull { it.name.resolve(context).equals(name, ignoreCase = true) }
 
+    private var job: Job? = null
+
     fun download(url: String, target: YtdlpTarget) {
         if (_state.value.busy) return
         _state.value = YtdlpState(busy = true, message = context.getString(R.string.ytdlp_starting))
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                runJob(url, target)
-            } catch (e: Exception) {
-                L.e(e, "yt-dlp job failed")
-                _state.value =
-                    YtdlpState(
-                        message =
-                            context.getString(
-                                R.string.ytdlp_failed,
-                                e.message?.lineSequence()?.lastOrNull { it.isNotBlank() }
-                                    ?: e.javaClass.simpleName,
-                            )
-                    )
+        job =
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    runJob(url, target)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    L.e(e, "yt-dlp job failed")
+                    _state.value = YtdlpState(message = describeFailure(e))
+                }
             }
+    }
+
+    /** Cancels a running download and kills the yt-dlp process. */
+    fun cancel() {
+        YoutubeDL.getInstance().destroyProcessById(PROCESS_ID)
+        job?.cancel()
+        _state.value = YtdlpState()
+    }
+
+    override fun onCleared() {
+        YoutubeDL.getInstance().destroyProcessById(PROCESS_ID)
+        super.onCleared()
+    }
+
+    /** Turns a yt-dlp failure into a message the user can understand. */
+    private fun describeFailure(e: Exception): String {
+        val text = errorText(e)
+        return when (classify(text)) {
+            ErrorKind.DRM -> context.getString(R.string.ytdlp_err_drm)
+            ErrorKind.PRIVATE -> context.getString(R.string.ytdlp_err_private)
+            ErrorKind.UNAVAILABLE -> context.getString(R.string.ytdlp_err_unavailable)
+            ErrorKind.UNSUPPORTED -> context.getString(R.string.ytdlp_err_unsupported)
+            else ->
+                context.getString(
+                    R.string.ytdlp_failed,
+                    // The last "ERROR:" line is the meaningful one, fall back to the last line.
+                    text.lineSequence().lastOrNull { it.contains("ERROR", ignoreCase = true) }
+                        ?: text.lineSequence().lastOrNull { it.isNotBlank() }
+                        ?: e.javaClass.simpleName,
+                )
+        }
+    }
+
+    private fun errorText(e: Throwable): String =
+        generateSequence(e) { it.cause }.mapNotNull { it.message }.joinToString("\n")
+
+    private enum class ErrorKind {
+        DRM,
+        PRIVATE,
+        UNAVAILABLE,
+        UNSUPPORTED,
+        /** Worth retrying with another player client / without the JS runtime. */
+        RETRYABLE,
+        OTHER,
+    }
+
+    private fun classify(text: String): ErrorKind {
+        // Judge only the error lines: verbose (-v) output is full of unrelated words.
+        val t =
+            text
+                .lineSequence()
+                .filter { it.contains("error", ignoreCase = true) }
+                .joinToString("\n")
+                .ifBlank { text }
+                .lowercase()
+        fun has(vararg k: String) = k.any { it in t }
+        return when {
+            has("drm") -> ErrorKind.DRM
+            has("private video", "this video is private", "members-only", "members only",
+                "join this channel") -> ErrorKind.PRIVATE
+            has("video unavailable", "this video is not available", "has been removed",
+                "not available in your country", "blocked it", "copyright", "account associated",
+                "does not exist", "http error 404") -> ErrorKind.UNAVAILABLE
+            has("unsupported url", "is not a valid url", "no suitable extractor") ->
+                ErrorKind.UNSUPPORTED
+            has("403", "forbidden", "challenge", "jsc", "javascript runtime", "format is not available",
+                "sign in", "confirm you", "no such option", "unrecognized arguments",
+                "permission denied", "exec format", "cannot run program", "error=13", "error=8",
+                "quickjs", "unable to download video data", "no video formats") ->
+                ErrorKind.RETRYABLE
+            else -> ErrorKind.OTHER
         }
     }
 
@@ -117,53 +190,13 @@ constructor(
             deleteRecursively()
             mkdirs()
         }
-        // YouTube changes which player clients work every few weeks, and a hard-pinned client
-        // list is a common cause of "HTTP Error 403". So first let yt-dlp pick its own clients
-        // and only fall back to specific ones if that fails without producing any audio.
-        var lastError: Exception? = null
-        for (client in PLAYER_CLIENT_ATTEMPTS) {
-            val request =
-                YoutubeDLRequest(url).apply {
-                    // Always end up with MP3: -x drops the video stream (so an mp4 becomes audio)
-                    // and --audio-format converts whatever audio is left to mp3 with ffmpeg.
-                    addOption("-f", "bestaudio/best")
-                    addOption("-x")
-                    addOption("--audio-format", "mp3")
-                    addOption("--audio-quality", "0")
-                    addOption("--embed-metadata")
-                    addOption("--embed-thumbnail")
-                    addOption("--convert-thumbnails", "jpg")
-                    addOption("--no-mtime")
-                    addOption("--ignore-errors")
-                    addOption("-o", "${scratch.absolutePath}/%(title).100s.%(ext)s")
-                    if (client != null) {
-                        addOption("--extractor-args", "youtube:player_client=$client")
-                    }
-                    // A link to a single video that merely carries a playlist id should not pull
-                    // in the whole playlist. Pure playlist links still download everything.
-                    if (url.contains("watch?v=") || url.contains("youtu.be/")) {
-                        addOption("--no-playlist")
-                    }
-                }
-            try {
-                YoutubeDL.getInstance().execute(request, PROCESS_ID) { progress, _, _ ->
-                    _state.value =
-                        YtdlpState(
-                            busy = true,
-                            message = context.getString(R.string.ytdlp_downloading),
-                            progress = progress.toInt().coerceIn(0, 100),
-                        )
-                }
-                lastError = null
-            } catch (e: Exception) {
-                // yt-dlp reports a failure if *any* playlist entry failed. Keep going if we still
-                // got some audio out of it.
-                lastError = e
-                L.w(e, "yt-dlp attempt with client=$client finished with errors")
-            }
-            if (audioFiles(scratch).isNotEmpty()) break
+        try {
+            downloadWithFallbacks(url, scratch)
+        } catch (e: Throwable) {
+            // Don't leave half-downloaded files behind on failure or cancellation.
+            scratch.deleteRecursively()
+            throw e
         }
-        if (audioFiles(scratch).isEmpty()) lastError?.let { throw it }
 
         val files = audioFiles(scratch)
         if (files.isEmpty()) {
@@ -245,6 +278,131 @@ constructor(
             YtdlpState(message = context.getString(R.string.ytdlp_done, songs.size, playlistName))
     }
 
+    /** One way of running yt-dlp: a YouTube player client and whether QuickJS is enabled. */
+    private data class Attempt(val client: String?, val quickJs: Boolean)
+
+    /** The download method picked in Settings (see the ytdlp_method_* integers). */
+    private fun downloadMethod(): Int =
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .getInt(
+                context.getString(R.string.set_key_ytdlp_method),
+                context.resources.getInteger(R.integer.ytdlp_method_new),
+            )
+
+    /** The bundled QuickJS binary, or null if it is missing or can't be executed. */
+    private fun quickJsPath(): String? {
+        val file = File(context.applicationInfo.nativeLibraryDir, QJS_LIB)
+        return if (file.exists() && file.canExecute()) {
+            file.absolutePath
+        } else {
+            L.w("QuickJS runtime unavailable at ${file.absolutePath} (exists=${file.exists()})")
+            null
+        }
+    }
+
+    /**
+     * Runs yt-dlp, trying progressively different setups when YouTube refuses (403, JS challenge,
+     * missing formats). Errors that retrying can't fix (DRM, private, unsupported...) stop
+     * immediately. Throws the last error if nothing produced audio.
+     */
+    private fun downloadWithFallbacks(url: String, scratch: File) {
+        val useOldMethod = downloadMethod() == context.resources.getInteger(R.integer.ytdlp_method_old)
+        val qjs = if (useOldMethod) null else quickJsPath()
+        val attempts =
+            if (useOldMethod) {
+                // The original behaviour, selectable in Settings: one run with fixed clients.
+                listOf(Attempt(OLD_METHOD_CLIENTS, false))
+            } else {
+                // YouTube changes what works every few weeks, so first let yt-dlp pick its own
+                // clients and only then fall back to specific ones. The no-QuickJS attempts come
+                // last in case the bundled runtime can't run on this device.
+                buildList {
+                    if (qjs != null) PLAYER_CLIENTS_QJS.forEach { add(Attempt(it, true)) }
+                    PLAYER_CLIENTS_PLAIN.forEach { add(Attempt(it, false)) }
+                }
+            }
+        L.d("yt-dlp download method: ${if (useOldMethod) "old" else "new"}")
+
+        var lastError: Exception? = null
+        for (attempt in attempts) {
+            val request =
+                YoutubeDLRequest(url).apply {
+                    // Always end up with MP3: -x drops the video stream (so an mp4 becomes audio)
+                    // and --audio-format converts whatever audio is left to mp3 with ffmpeg.
+                    addOption("-f", "bestaudio/best")
+                    addOption("-x")
+                    addOption("--audio-format", "mp3")
+                    addOption("--audio-quality", "0")
+                    addOption("--embed-metadata")
+                    addOption("--embed-thumbnail")
+                    addOption("--convert-thumbnails", "jpg")
+                    addOption("--no-mtime")
+                    addOption("--ignore-errors")
+                    addOption("-o", "${scratch.absolutePath}/%(title).100s.%(ext)s")
+                    if (attempt.quickJs && qjs != null) {
+                        // Only QuickJS: there is no deno/node on Android.
+                        addOption("--no-js-runtimes")
+                        addOption("--js-runtimes", "quickjs:$qjs")
+                        // Fetch the challenge solver scripts if this yt-dlp build doesn't ship
+                        // them. Old builds reject the flag, which falls through to the plain
+                        // attempts below.
+                        addOption("--remote-components", "ejs:github")
+                    }
+                    if (attempt.client != null) {
+                        addOption("--extractor-args", "youtube:player_client=${attempt.client}")
+                    }
+                    if (BuildConfig.DEBUG) addOption("-v")
+                    // A link to a single video that merely carries a playlist id should not pull
+                    // in the whole playlist. Pure playlist links still download everything.
+                    if (url.contains("watch?v=") || url.contains("youtu.be/")) {
+                        addOption("--no-playlist")
+                    }
+                }
+            L.d("yt-dlp attempt: client=${attempt.client} quickjs=${attempt.quickJs}")
+            try {
+                val response =
+                    YoutubeDL.getInstance().execute(request, PROCESS_ID) { progress, _, _ ->
+                        _state.value =
+                            YtdlpState(
+                                busy = true,
+                                message = context.getString(R.string.ytdlp_downloading),
+                                progress = progress.toInt().coerceIn(0, 100),
+                            )
+                    }
+                logDiagnostics(response.err)
+                lastError = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                val text = errorText(e)
+                L.w("yt-dlp attempt failed (client=${attempt.client}, quickjs=${attempt.quickJs}): $text")
+                logDiagnostics(text)
+                // yt-dlp reports a failure if *any* playlist entry failed. Keep what we got.
+                if (audioFiles(scratch).isNotEmpty()) break
+                if (classify(text) != ErrorKind.RETRYABLE) break
+            }
+            if (audioFiles(scratch).isNotEmpty()) break
+        }
+        if (audioFiles(scratch).isEmpty()) lastError?.let { throw it }
+    }
+
+    /** In debug builds, log the interesting parts of yt-dlp's verbose output. */
+    private fun logDiagnostics(output: String?) {
+        if (!BuildConfig.DEBUG || output.isNullOrBlank()) return
+        output
+            .lineSequence()
+            .filter {
+                it.contains("yt-dlp version", ignoreCase = true) ||
+                    it.contains("JS runtimes") ||
+                    it.contains("[jsc") ||
+                    it.contains("player") ||
+                    it.startsWith("WARNING") ||
+                    it.startsWith("ERROR")
+            }
+            .forEach { L.d("yt-dlp: $it") }
+    }
+
     private fun audioFiles(dir: File) =
         dir.listFiles()
             ?.filter { it.isFile && it.extension.lowercase() in AUDIO_EXTENSIONS }
@@ -271,28 +429,38 @@ constructor(
         private const val PROCESS_ID = "auxio-ytdlp"
         private const val DEFAULT_FOLDER = "yt-dlp"
 
+        private const val QJS_LIB = "libqjs.so"
+        private const val OLD_METHOD_CLIENTS = "android_vr,web_safari"
+
         // null = let yt-dlp choose; the rest are fallbacks tried in order.
-        private val PLAYER_CLIENT_ATTEMPTS = listOf(null, "android_vr", "tv", "web_safari")
+        private val PLAYER_CLIENTS_QJS = listOf(null, "tv", "android_vr")
+        private val PLAYER_CLIENTS_PLAIN = listOf(null, "android_vr", "tv", "web_safari")
         private const val INDEX_TIMEOUT_MS = 180_000L
         private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "opus", "ogg", "flac", "wav")
 
         @Volatile private var initialized = false
+        @Volatile private var updated = false
 
         private val initLock = Any()
     }
 
     private fun ensureInitialized() {
         synchronized(initLock) {
-            if (initialized) return
-            YoutubeDL.getInstance().init(context)
-            try {
-                YoutubeDL.getInstance()
-                    .updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
-            } catch (e: Exception) {
-                L.w(e, "yt-dlp update failed")
+            if (!initialized) {
+                YoutubeDL.getInstance().init(context)
+                FFmpeg.getInstance().init(context)
+                initialized = true
             }
-            FFmpeg.getInstance().init(context)
-            initialized = true
+            // The update needs network, so a failure must not block downloads. Retry it on the next
+            // download until it has worked once.
+            if (!updated) {
+                try {
+                    YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                    updated = true
+                } catch (e: Exception) {
+                    L.w(e, "yt-dlp update failed, will retry on the next download")
+                }
+            }
         }
     }
 }
