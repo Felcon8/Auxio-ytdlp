@@ -104,6 +104,10 @@
     <string name="ytdlp_not_indexed">The files were saved to the “%1$s” folder, but Auxio did not find them. Make sure your music folder is set in Settings → Music folders, then refresh the library.</string>
     <string name="ytdlp_done">Added %1$d song(s) to “%2$s”.</string>
     <string name="ytdlp_failed">Download failed: %1$s</string>
+    <string name="ytdlp_err_drm">This track is DRM protected and cannot be downloaded.</string>
+    <string name="ytdlp_err_private">This content is private or members-only and cannot be downloaded.</string>
+    <string name="ytdlp_err_unavailable">This content is unavailable (removed, region-locked or blocked).</string>
+    <string name="ytdlp_err_unsupported">This link is not supported by yt-dlp.</string>
     <string name="lbl_new_playlist">New playlist</string>
     <string name="lbl_empty_playlist">Empty playlist</string>
     <string name="lbl_imported_playlist">Imported playlist</string>
@@ -306,6 +310,10 @@
     <string name="set_intelligent_sorting_desc">Correctly sort names that begin with numbers or words like \"the\" (works best with english-language music)</string>
     <string name="set_hide_collaborators">Hide collaborators</string>
     <string name="set_hide_collaborators_desc">Only show artists that are directly credited on an album (works best on well-tagged libraries)</string>
+    <string name="set_ytdlp">yt-dlp</string>
+    <string name="set_ytdlp_method">Download method</string>
+    <string name="set_ytdlp_method_new">New (QuickJS, with automatic fallbacks)</string>
+    <string name="set_ytdlp_method_old">Old (fixed YouTube clients, no QuickJS)</string>
     <string name="set_images">Images</string>
     <string name="set_cover_mode">Album covers</string>
     <string name="set_cover_mode_off">Off</string>
