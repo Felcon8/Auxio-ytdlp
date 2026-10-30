@@ -28,6 +28,17 @@
 
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/set_ytdlp">
+
+        <org.oxycblt.auxio.settings.ui.IntListPreference
+            app:defaultValue="@integer/ytdlp_method_new"
+            app:entries="@array/entries_ytdlp_method"
+            app:entryValues="@array/values_ytdlp_method"
+            app:key="@string/set_key_ytdlp_method"
+            app:title="@string/set_ytdlp_method" />
+
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/set_images">
 
         <org.oxycblt.auxio.settings.ui.IntListPreference
