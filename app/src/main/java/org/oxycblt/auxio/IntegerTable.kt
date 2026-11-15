@@ -93,6 +93,9 @@ object IntegerTable {
     const val MUSIC_MODE_PLAYLISTS = 0xA107
     /** MusicMode.YTDLP (fork-only) */
     const val MUSIC_MODE_YTDLP = 0xA1F0
+
+    /** MusicMode.SERVER (fork-only) */
+    const val MUSIC_MODE_SERVER = 0xA1F1
     /** Sort.Mode.ByName */
     const val SORT_BY_NAME = 0xA10C
     /** Sort.Mode.ByArtist */

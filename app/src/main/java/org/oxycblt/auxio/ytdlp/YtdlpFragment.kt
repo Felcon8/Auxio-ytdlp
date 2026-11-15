@@ -97,6 +97,7 @@ class YtdlpFragment : Fragment() {
             }
         }
 
+        binding.ytdlpOnServer.setOnCheckedChangeListener { _, checked -> model.useServer = checked }
         binding.ytdlpDownload.setOnClickListener { onDownloadClicked(binding) }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -104,6 +105,14 @@ class YtdlpFragment : Fragment() {
                 model.state.collect { render(it) }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The option only makes sense once the Server tab has an address and password.
+        val binding = binding ?: return
+        binding.ytdlpOnServer.isVisible = model.serverAvailable()
+        binding.ytdlpOnServer.isChecked = model.useServer
     }
 
     override fun onDestroyView() {

@@ -42,6 +42,9 @@ import org.oxycblt.auxio.R
 import org.oxycblt.auxio.music.MusicRepository
 import org.oxycblt.auxio.music.PlaylistFolders
 import org.oxycblt.auxio.music.resolve
+import org.oxycblt.auxio.server.ServerClient
+import org.oxycblt.auxio.server.ServerException
+import org.oxycblt.auxio.server.ServerSettings
 import org.oxycblt.musikr.Playlist
 import org.oxycblt.musikr.Song
 import timber.log.Timber as L
@@ -78,6 +81,7 @@ constructor(
     @ApplicationContext private val context: Context,
     private val musicRepository: MusicRepository,
     private val playlistFolders: PlaylistFolders,
+    private val serverSettings: ServerSettings,
 ) : ViewModel() {
     private val _state = MutableStateFlow(YtdlpState())
     val state: StateFlow<YtdlpState> = _state
@@ -93,6 +97,19 @@ constructor(
         playlists().firstOrNull { it.name.resolve(context).equals(name, ignoreCase = true) }
 
     private var job: Job? = null
+
+    /** Whether the "download on the server" option can be offered (address + password set). */
+    fun serverAvailable(): Boolean = serverSettings.isConfigured
+
+    /** Whether downloads run on the Auxio server instead of on this phone. */
+    var useServer: Boolean
+        get() = serverSettings.ytdlpOnServer
+        set(value) {
+            serverSettings.ytdlpOnServer = value
+        }
+
+    /** Id of the job running on the server, so it can be cancelled there too. */
+    @Volatile private var serverJobId: String? = null
 
     fun download(url: String, target: YtdlpTarget) {
         if (_state.value.busy) return
@@ -113,6 +130,17 @@ constructor(
     /** Cancels a running download and kills the yt-dlp process. */
     fun cancel() {
         YoutubeDL.getInstance().destroyProcessById(PROCESS_ID)
+        serverJobId?.let { id ->
+            // Best effort: stop the download on the server as well.
+            val settings = serverSettings
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    ServerClient(settings.url, settings.password).ytCancel(id)
+                } catch (e: Exception) {
+                    L.w(e, "Could not cancel the server download")
+                }
+            }
+        }
         job?.cancel()
         _state.value = YtdlpState()
     }
@@ -183,7 +211,9 @@ constructor(
     }
 
     private suspend fun runJob(url: String, target: YtdlpTarget) {
-        ensureInitialized()
+        val onServer = serverSettings.isConfigured && serverSettings.ytdlpOnServer
+        // The bundled python/yt-dlp is only needed when downloading on the phone.
+        if (!onServer) ensureInitialized()
 
         // 1. Download & convert with yt-dlp into a private scratch directory.
         val scratch = File(context.cacheDir, "ytdlp").apply {
@@ -191,7 +221,11 @@ constructor(
             mkdirs()
         }
         try {
-            downloadWithFallbacks(url, scratch)
+            if (onServer) {
+                downloadOnServer(url, target, scratch)
+            } else {
+                downloadWithFallbacks(url, scratch)
+            }
         } catch (e: Throwable) {
             // Don't leave half-downloaded files behind on failure or cancellation.
             scratch.deleteRecursively()
@@ -276,6 +310,71 @@ constructor(
         }
         _state.value =
             YtdlpState(message = context.getString(R.string.ytdlp_done, songs.size, playlistName))
+    }
+
+    /**
+     * Lets the Auxio server run yt-dlp, waits for it and fetches the resulting files into
+     * [scratch]. From there the normal flow takes over (copy into the playlist folder, index, add
+     * to the playlist), so the songs end up exactly where a local download would put them, and at
+     * the same relative path as on the server, which keeps the next sync a no-op.
+     */
+    private suspend fun downloadOnServer(url: String, target: YtdlpTarget, scratch: File) {
+        val client = ServerClient(serverSettings.url, serverSettings.password)
+        val playlist =
+            when (target) {
+                is YtdlpTarget.Existing ->
+                    PlaylistFolders.folderName(target.playlist.name.resolve(context))
+                is YtdlpTarget.New -> PlaylistFolders.folderName(target.name)
+                YtdlpTarget.None -> null
+            }
+        // Like on the phone: a link to a single video must not pull in a whole playlist.
+        val allItems = !(url.contains("watch?v=") || url.contains("youtu.be/"))
+
+        _state.value =
+            YtdlpState(busy = true, message = context.getString(R.string.ytdlp_server_sending))
+        val id = client.ytAdd(url, playlist, allItems)
+        serverJobId = id
+        try {
+            var added: List<String> = emptyList()
+            while (true) {
+                delay(1500)
+                val remote =
+                    client.ytJob(id)
+                        ?: throw ServerException(context.getString(R.string.ytdlp_server_job_gone))
+                when (remote.status) {
+                    "done" -> {
+                        added = remote.added
+                        break
+                    }
+                    "error" -> throw ServerException(remote.error.ifBlank { "yt-dlp failed" })
+                    "canceled" ->
+                        throw ServerException(context.getString(R.string.ytdlp_server_cancelled))
+                    else ->
+                        _state.value =
+                            YtdlpState(
+                                busy = true,
+                                message = context.getString(R.string.ytdlp_server_downloading),
+                                progress = if (remote.status == "running") remote.progress else -1,
+                            )
+                }
+            }
+
+            _state.value =
+                YtdlpState(
+                    busy = true,
+                    message = context.getString(R.string.ytdlp_server_fetching),
+                    progress = -1,
+                )
+            val wanted = added.toSet()
+            for (file in client.manifest().filter { it.path in wanted }) {
+                val name = file.path.substringAfterLast('/')
+                File(scratch, name).outputStream().use { out ->
+                    client.download(file.id, out, {}, { })
+                }
+            }
+        } finally {
+            serverJobId = null
+        }
     }
 
     /** One way of running yt-dlp: a YouTube player client and whether QuickJS is enabled. */

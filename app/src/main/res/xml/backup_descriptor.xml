@@ -4,4 +4,8 @@
     <exclude
         domain="database"
         path="music_cache.db" />
+    <!-- The server address and password stay on this device -->
+    <exclude
+        domain="sharedpref"
+        path="server_settings.xml" />
 </full-backup-content>

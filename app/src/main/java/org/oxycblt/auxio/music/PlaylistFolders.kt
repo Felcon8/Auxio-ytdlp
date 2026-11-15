@@ -61,6 +61,22 @@ constructor(
             null
         }
 
+    /**
+     * The path components of the main music folder (the one playlist folders live in), or null if
+     * no music folder has been picked yet. Same logic the indexer uses for folder playlists.
+     */
+    fun rootComponents(): List<String>? =
+        when (musicSettings.locationMode) {
+            LocationMode.SAF ->
+                try {
+                    musicSettings.safQuery.source.firstOrNull()?.path?.components?.components
+                } catch (e: Exception) {
+                    L.e(e, "Could not resolve the main music folder")
+                    null
+                }
+            LocationMode.MEDIA_STORE -> listOf(Environment.DIRECTORY_MUSIC)
+        }
+
     /** Create the folder for the playlist (only possible right away when a folder was picked). */
     fun ensureFolder(folder: String) {
         val tree = mainTree() ?: return
@@ -94,7 +110,10 @@ constructor(
     fun exists(folder: String, fileName: String): Boolean {
         val tree = mainTree()
         if (tree != null) {
-            val dir = findChild(tree, treeRoot(tree), folder, true) ?: return false
+            var dir = treeRoot(tree)
+            for (segment in segments(folder)) {
+                dir = findChild(tree, dir, segment, true) ?: return false
+            }
             return findChild(tree, dir, fileName, false) != null
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -104,7 +123,7 @@ constructor(
                     arrayOf(MediaStore.Audio.Media._ID),
                     "${MediaStore.Audio.Media.DISPLAY_NAME} = ? AND " +
                         "${MediaStore.Audio.Media.RELATIVE_PATH} = ?",
-                    arrayOf(fileName, "${Environment.DIRECTORY_MUSIC}/$folder/"),
+                    arrayOf(fileName, relativeMusicPath(folder)),
                     null,
                 )
                 ?.use {
@@ -141,10 +160,7 @@ constructor(
                 ContentValues().apply {
                     put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
                     put(MediaStore.Audio.Media.MIME_TYPE, mime)
-                    put(
-                        MediaStore.Audio.Media.RELATIVE_PATH,
-                        "${Environment.DIRECTORY_MUSIC}/$folder",
-                    )
+                    put(MediaStore.Audio.Media.RELATIVE_PATH, relativeMusicPath(folder))
                     put(MediaStore.Audio.Media.IS_PENDING, 1)
                 }
             val uri = checkNotNull(resolver.insert(collection, values)) { "MediaStore insert failed" }
@@ -176,15 +192,31 @@ constructor(
     private fun treeRoot(tree: Uri): Uri =
         DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
 
+    /** Creates every missing level of [folder] ("a/b/c") below the tree root. */
     private fun ensureDir(tree: Uri, folder: String): Uri? {
-        val root = treeRoot(tree)
-        return findChild(tree, root, folder, true)
-            ?: DocumentsContract.createDocument(
-                context.contentResolver,
-                root,
-                DocumentsContract.Document.MIME_TYPE_DIR,
-                folder,
-            )
+        var dir = treeRoot(tree)
+        for (segment in segments(folder)) {
+            dir =
+                findChild(tree, dir, segment, true)
+                    ?: DocumentsContract.createDocument(
+                        context.contentResolver,
+                        dir,
+                        DocumentsContract.Document.MIME_TYPE_DIR,
+                        segment,
+                    )
+                    ?: return null
+        }
+        return dir
+    }
+
+    /** The folder as path segments. A folder may be nested ("Artist/Album") or empty (the root). */
+    private fun segments(folder: String) = folder.split('/').filter { it.isNotEmpty() }
+
+    /** MediaStore RELATIVE_PATH of a folder inside the public Music directory. */
+    private fun relativeMusicPath(folder: String): String {
+        val parts = segments(folder)
+        return if (parts.isEmpty()) "${Environment.DIRECTORY_MUSIC}/"
+        else "${Environment.DIRECTORY_MUSIC}/${parts.joinToString("/")}/"
     }
 
     private fun findChild(tree: Uri, parent: Uri, name: String, directory: Boolean): Uri? {

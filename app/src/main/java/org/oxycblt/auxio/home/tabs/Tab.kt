@@ -58,13 +58,21 @@ sealed class Tab(open val type: MusicType) {
         // MusicMode for this tab.
 
         /** The maximum index that a well-formed tab sequence should be. */
-        const val MAX_SEQUENCE_IDX = 3
+        const val MAX_SEQUENCE_IDX = 4
+
+        // Fork: the Server tab made it 5 tabs. Sequences saved by older versions have only 4
+        // chunks (16 bits). To tell them apart, current sequences start with a marker chunk of
+        // 0b1111 in front of the tabs (mode 7 does not exist, so it never parses as a tab).
+        private const val LEGACY_MAX_SEQUENCE_IDX = 3
+        private const val MARKER = 0b1111
+        private const val MARKER_SHIFT = (MAX_SEQUENCE_IDX + 1) * 4
 
         /**
          * The default tab sequence, in integer form. This fork shows "Songs", "Playlists" and
          * "yt-dlp". Albums is kept last and invisible (it is also filtered out in HomeSettings).
          */
-        const val SEQUENCE_DEFAULT = 0b1000_1010_1011_0001
+        // Chunks: marker, Songs, Playlists, yt-dlp, Server, Albums (hidden).
+        const val SEQUENCE_DEFAULT = 0b1111_1000_1010_1011_1100_0001
 
         /** Maps between the integer code in the tab sequence and it's [MusicType]. */
         private val MODE_TABLE =
@@ -73,6 +81,7 @@ sealed class Tab(open val type: MusicType) {
                 MusicType.ALBUMS,
                 MusicType.PLAYLISTS,
                 MusicType.YTDLP,
+                MusicType.SERVER,
             )
 
         /**
@@ -90,7 +99,7 @@ sealed class Tab(open val type: MusicType) {
                 )
             }
 
-            var sequence = 0
+            var sequence = MARKER.shl(MARKER_SHIFT)
             var shift = MAX_SEQUENCE_IDX * 4
             for (tab in distinct) {
                 val bin =
@@ -114,10 +123,12 @@ sealed class Tab(open val type: MusicType) {
          */
         fun fromIntCode(intCode: Int): Array<Tab>? {
             val tabs = mutableListOf<Tab>()
+            val isCurrent = (intCode.ushr(MARKER_SHIFT) and 0b1111) == MARKER
+            val maxIdx = if (isCurrent) MAX_SEQUENCE_IDX else LEGACY_MAX_SEQUENCE_IDX
 
             // Try to parse a mode for each chunk in the sequence.
             // If we can't parse one, just skip it.
-            for (shift in (0..MAX_SEQUENCE_IDX * 4).reversed() step 4) {
+            for (shift in (0..maxIdx * 4).reversed() step 4) {
                 val chunk = intCode.shr(shift) and 0b1111
                 val mode = MODE_TABLE.getOrNull(chunk and 7) ?: continue
 
@@ -131,16 +142,26 @@ sealed class Tab(open val type: MusicType) {
             }
 
             // Make sure there are no duplicate tabs
-            val distinct = tabs.distinctBy { it.type }
+            var distinct: List<Tab> = tabs.distinctBy { it.type }
             if (tabs.size != distinct.size) {
                 L.w(
                     "Tab sequences should not have duplicates [old: ${tabs.size} new: ${distinct.size}]"
                 )
             }
 
-            // For safety, return null if we have an empty or larger-than-expected tab array.
-            if (distinct.size != MODE_TABLE.size) {
-                L.e("Sequence size was ${distinct.size}, which is invalid")
+            // Sequences saved before the Server tab existed get it appended (visible).
+            if (!isCurrent && distinct.none { it.type == MusicType.SERVER }) {
+                distinct = distinct + Visible(MusicType.SERVER)
+            }
+
+            // The Albums tab is hidden by HomeSettings, so a saved layout may not mention every
+            // tab. Anything missing is added back as invisible instead of discarding the layout.
+            val missing = MODE_TABLE.filter { mode -> distinct.none { it.type == mode } }
+            distinct = distinct + missing.map<MusicType, Tab> { Invisible(it) }
+
+            // For safety, return null if we have an empty tab array.
+            if (distinct.isEmpty()) {
+                L.e("Sequence was empty, which is invalid")
                 return null
             }
 

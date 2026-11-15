@@ -59,6 +59,7 @@ import org.oxycblt.auxio.music.PlaylistDecision
 import org.oxycblt.auxio.music.PlaylistMessage
 import org.oxycblt.auxio.playback.PlaybackDecision
 import org.oxycblt.auxio.playback.PlaybackViewModel
+import org.oxycblt.auxio.server.ServerFragment
 import org.oxycblt.auxio.ytdlp.YtdlpFragment
 import org.oxycblt.auxio.ui.FadingToolbarOffsetListener
 import org.oxycblt.auxio.util.collect
@@ -215,7 +216,8 @@ class HomeFragment : SelectionFragment<FragmentHomeBinding>() {
                         MusicType.ARTISTS -> HomeFragmentDirections.sortArtists()
                         MusicType.GENRES -> HomeFragmentDirections.sortGenres()
                         MusicType.PLAYLISTS -> HomeFragmentDirections.sortPlaylists()
-                        MusicType.YTDLP -> null
+                        MusicType.YTDLP,
+                        MusicType.SERVER -> null
                     }
                 if (directions != null) {
                     findNavController().navigateSafe(directions)
@@ -271,10 +273,11 @@ class HomeFragment : SelectionFragment<FragmentHomeBinding>() {
                 MusicType.GENRES -> R.id.home_genre_recycler
                 MusicType.PLAYLISTS -> R.id.home_playlist_recycler
                 MusicType.YTDLP -> R.id.home_ytdlp_scroll
+                MusicType.SERVER -> R.id.home_server_scroll
             }
-        // The sort action makes no sense on the yt-dlp tab.
+        // The sort action makes no sense on the yt-dlp and Server tabs.
         binding.homeNormalToolbar.menu.findItem(R.id.action_sort)?.isVisible =
-            tabType != MusicType.YTDLP
+            tabType != MusicType.YTDLP && tabType != MusicType.SERVER
     }
 
     private fun handleRecreate(recreate: Unit?) {
@@ -497,6 +500,7 @@ class HomeFragment : SelectionFragment<FragmentHomeBinding>() {
                 MusicType.GENRES -> GenreListFragment()
                 MusicType.PLAYLISTS -> PlaylistListFragment()
                 MusicType.YTDLP -> YtdlpFragment()
+                MusicType.SERVER -> ServerFragment()
             }
     }
 }
